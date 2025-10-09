@@ -1,0 +1,117 @@
+---
+- name: Deploy HDFS Cluster - Common Setup
+  hosts: all
+  become: yes
+  vars:
+    hadoop_version: "3.3.6"
+    install_dir: "/opt/hadoop"
+    java_home: "/usr/lib/jvm/java-11-openjdk-amd64"
+    namenode_host: "nn"
+    secondary_namenode_host: "jn"
+    hdfs_data_dir: "/data/hdfs"
+    datanode_hosts: ["nn", "dn-00", "dn-01"]
+
+  tasks:
+    - name: Update package cache
+      apt: { update_cache: yes }
+    - name: Install required packages
+      apt: { name: [openjdk-11-jdk, ssh, pdsh], state: present }
+    - name: Create hadoop user
+      user: { name: hadoop, comment: "Hadoop User", shell: /bin/bash, home: /home/hadoop }
+    - name: Generate SSH key for hadoop user on NameNode
+      user: { name: hadoop, generate_ssh_key: yes, ssh_key_file: .ssh/id_rsa }
+      when: inventory_hostname == namenode_host
+    - name: Fetch the hadoop user's public key from NameNode
+      fetch: { src: /home/hadoop/.ssh/id_rsa.pub, dest: /tmp/hadoop_id_rsa.pub, flat: yes }
+      when: inventory_hostname == namenode_host
+    - name: Distribute hadoop user's public key to all nodes
+      authorized_key: { user: hadoop, state: present, key: "{{ lookup('file', '/tmp/hadoop_id_rsa.pub') }}" }
+    - name: Create installation directory
+      file: { path: "{{ install_dir }}", state: directory, owner: hadoop, group: hadoop }
+    - name: Create data directories
+      file: { path: "{{ hdfs_data_dir }}/{{ item }}", state: directory, owner: hadoop, group: hadoop, mode: '0755' }
+      loop: [namenode, datanode, checkpoint]
+    - name: Copy Hadoop archive from control node to servers
+      copy: { src: "/tmp/hadoop-{{ hadoop_version }}.tar.gz", dest: "/tmp/hadoop-{{ hadoop_version }}.tar.gz" }
+    - name: Extract Hadoop
+      unarchive: { src: "/tmp/hadoop-{{ hadoop_version }}.tar.gz", dest: "{{ install_dir }}", remote_src: yes, owner: hadoop, group: hadoop, creates: "{{ install_dir }}/hadoop-{{ hadoop_version }}" }
+    - name: Create symlink
+      file: { src: "{{ install_dir }}/hadoop-{{ hadoop_version }}", dest: "{{ install_dir }}/current", state: link, owner: hadoop, group: hadoop }
+    - name: Configure hadoop-env.sh on all nodes
+      lineinfile: { path: "{{ install_dir }}/current/etc/hadoop/hadoop-env.sh", regexp: '^export JAVA_HOME=', line: 'export JAVA_HOME={{ java_home }}', owner: hadoop, group: hadoop }
+    - name: Add Java 11+ options to hadoop-env.sh on all nodes
+      lineinfile: { path: "{{ install_dir }}/current/etc/hadoop/hadoop-env.sh", line: 'export HADOOP_OPTS="$HADOOP_OPTS --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED"', insertafter: EOF, owner: hadoop, group: hadoop }
+    - name: Add hosts to /etc/hosts
+      lineinfile: { path: /etc/hosts, line: "{{ hostvars[item].ansible_host }} {{ item }}", state: present }
+      loop: "{{ groups['all'] }}"
+
+- name: Configure and Start NameNode
+  hosts: namenode
+  become: yes
+  vars:
+    install_dir: "/opt/hadoop"
+    secondary_namenode_host: "jn"
+    java_home: "/usr/lib/jvm/java-11-openjdk-amd64"
+    hdfs_data_dir: "/data/hdfs"
+    namenode_host: "nn"
+    datanode_hosts: ["nn", "dn-00", "dn-01"]
+  tasks:
+    - name: Configure core-site.xml
+      template: { src: templates/core-site.xml.j2, dest: "{{ install_dir }}/current/etc/hadoop/core-site.xml", owner: hadoop, group: hadoop }
+    - name: Configure hdfs-site.xml for NameNode with DataNode
+      template: { src: templates/hdfs-site-namenode-datanode.xml.j2, dest: "{{ install_dir }}/current/etc/hadoop/hdfs-site.xml", owner: hadoop, group: hadoop }
+    - name: Configure workers file
+      template: { src: templates/workers.j2, dest: "{{ install_dir }}/current/etc/hadoop/workers", owner: hadoop, group: hadoop }
+    - name: Format HDFS
+      shell: "sudo -u hadoop {{ install_dir }}/current/bin/hdfs namenode -format -force"
+      args:
+        creates: "{{ hdfs_data_dir }}/namenode/current/VERSION"
+    - name: Start NameNode daemon
+      shell: "sudo -u hadoop {{ install_dir }}/current/bin/hdfs --daemon start namenode"
+      args:
+        creates: "/tmp/hadoop-hadoop-namenode.pid"
+    - name: Start DataNode daemon on NameNode host
+      shell: "sudo -u hadoop {{ install_dir }}/current/bin/hdfs --daemon start datanode"
+      args:
+        creates: "/tmp/hadoop-hadoop-datanode.pid"
+
+- name: Configure and Start Secondary NameNode
+  hosts: secondary_namenode
+  become: yes
+  vars:
+    install_dir: "/opt/hadoop"
+    java_home: "/usr/lib/jvm/java-11-openjdk-amd64"
+    hdfs_data_dir: "/data/hdfs"
+    namenode_host: "nn"
+    secondary_namenode_host: "jn"
+    datanode_hosts: ["nn", "dn-00", "dn-01"]
+  tasks:
+    - name: Configure core-site.xml
+      template: { src: templates/core-site.xml.j2, dest: "{{ install_dir }}/current/etc/hadoop/core-site.xml", owner: hadoop, group: hadoop }
+    - name: Configure hdfs-site.xml for Secondary NameNode
+      template: { src: templates/hdfs-site-secondary.xml.j2, dest: "{{ install_dir }}/current/etc/hadoop/hdfs-site.xml", owner: hadoop, group: hadoop }
+    - name: Start Secondary NameNode daemon
+      shell: "sudo -u hadoop {{ install_dir }}/current/bin/hdfs --daemon start secondarynamenode"
+      args:
+        creates: "/tmp/hadoop-hadoop-secondarynamenode.pid"
+
+- name: Configure and Start DataNodes
+  hosts: datanodes:!namenode
+  become: yes
+  vars:
+    install_dir: "/opt/hadoop"
+    java_home: "/usr/lib/jvm/java-11-openjdk-amd64"
+    hdfs_data_dir: "/data/hdfs"
+    namenode_host: "nn"
+    secondary_namenode_host: "jn"
+    datanode_hosts: ["nn", "dn-00", "dn-01"]
+  tasks:
+    - name: Configure core-site.xml
+      template: { src: templates/core-site.xml.j2, dest: "{{ install_dir }}/current/etc/hadoop/core-site.xml", owner: hadoop, group: hadoop }
+    - name: Configure hdfs-site.xml for DataNode
+      template: { src: templates/hdfs-site-datanode.xml.j2, dest: "{{ install_dir }}/current/etc/hadoop/hdfs-site.xml", owner: hadoop, group: hadoop }
+    - name: Start DataNode daemon
+      shell: "sudo -u hadoop {{ install_dir }}/current/bin/hdfs --daemon start datanode"
+      args:
+        creates: "/tmp/hadoop-hadoop-datanode.pid"
+
