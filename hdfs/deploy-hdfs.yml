@@ -8,8 +8,15 @@
     java_home: "/usr/lib/jvm/java-11-openjdk-amd64"
     namenode_host: "nn"
     secondary_namenode_host: "jn"
+    resourcemanager_host: "nn"
     hdfs_data_dir: "/data/hdfs"
+    yarn_data_dir: "/data/yarn"
     datanode_hosts: ["nn", "dn-00", "dn-01"]
+    nodemanager_hosts: ["nn", "dn-00", "dn-01"]
+    yarn_nodemanager_memory_mb: 2048
+    yarn_nodemanager_cpu_vcores: 2
+    yarn_scheduler_max_allocation_mb: 4096
+    yarn_scheduler_min_allocation_mb: 128
 
   tasks:
     - name: Update package cache
@@ -31,6 +38,9 @@
     - name: Create data directories
       file: { path: "{{ hdfs_data_dir }}/{{ item }}", state: directory, owner: hadoop, group: hadoop, mode: '0755' }
       loop: [namenode, datanode, checkpoint]
+    - name: Create YARN data directories
+      file: { path: "{{ yarn_data_dir }}/{{ item }}", state: directory, owner: hadoop, group: hadoop, mode: '0755' }
+      loop: [nodemanager/local, nodemanager/logs]
     - name: Copy Hadoop archive from control node to servers
       copy: { src: "/tmp/hadoop-{{ hadoop_version }}.tar.gz", dest: "/tmp/hadoop-{{ hadoop_version }}.tar.gz" }
     - name: Extract Hadoop
@@ -55,6 +65,7 @@
     hdfs_data_dir: "/data/hdfs"
     namenode_host: "nn"
     datanode_hosts: ["nn", "dn-00", "dn-01"]
+    nodemanager_hosts: ["nn", "dn-00", "dn-01"]
   tasks:
     - name: Configure core-site.xml
       template: { src: templates/core-site.xml.j2, dest: "{{ install_dir }}/current/etc/hadoop/core-site.xml", owner: hadoop, group: hadoop }
@@ -85,6 +96,7 @@
     namenode_host: "nn"
     secondary_namenode_host: "jn"
     datanode_hosts: ["nn", "dn-00", "dn-01"]
+    nodemanager_hosts: ["nn", "dn-00", "dn-01"]
   tasks:
     - name: Configure core-site.xml
       template: { src: templates/core-site.xml.j2, dest: "{{ install_dir }}/current/etc/hadoop/core-site.xml", owner: hadoop, group: hadoop }
@@ -105,6 +117,7 @@
     namenode_host: "nn"
     secondary_namenode_host: "jn"
     datanode_hosts: ["nn", "dn-00", "dn-01"]
+    nodemanager_hosts: ["nn", "dn-00", "dn-01"]
   tasks:
     - name: Configure core-site.xml
       template: { src: templates/core-site.xml.j2, dest: "{{ install_dir }}/current/etc/hadoop/core-site.xml", owner: hadoop, group: hadoop }
@@ -114,4 +127,74 @@
       shell: "sudo -u hadoop {{ install_dir }}/current/bin/hdfs --daemon start datanode"
       args:
         creates: "/tmp/hadoop-hadoop-datanode.pid"
+
+- name: Configure and Start ResourceManager
+  hosts: resourcemanager
+  become: yes
+  vars:
+    install_dir: "/opt/hadoop"
+    java_home: "/usr/lib/jvm/java-11-openjdk-amd64"
+    hdfs_data_dir: "/data/hdfs"
+    yarn_data_dir: "/data/yarn"
+    namenode_host: "nn"
+    resourcemanager_host: "nn"
+    datanode_hosts: ["nn", "dn-00", "dn-01"]
+    nodemanager_hosts: ["nn", "dn-00", "dn-01"]
+    yarn_nodemanager_memory_mb: 2048
+    yarn_nodemanager_cpu_vcores: 2
+    yarn_scheduler_max_allocation_mb: 4096
+    yarn_scheduler_min_allocation_mb: 128
+  tasks:
+    - name: Configure core-site.xml
+      template: { src: templates/core-site.xml.j2, dest: "{{ install_dir }}/current/etc/hadoop/core-site.xml", owner: hadoop, group: hadoop }
+    - name: Configure hdfs-site.xml for ResourceManager
+      template: { src: templates/hdfs-site-namenode-datanode.xml.j2, dest: "{{ install_dir }}/current/etc/hadoop/hdfs-site.xml", owner: hadoop, group: hadoop }
+    - name: Configure yarn-site.xml
+      template: { src: templates/yarn-site.xml.j2, dest: "{{ install_dir }}/current/etc/hadoop/yarn-site.xml", owner: hadoop, group: hadoop }
+    - name: Configure mapred-site.xml
+      template: { src: templates/mapred-site.xml.j2, dest: "{{ install_dir }}/current/etc/hadoop/mapred-site.xml", owner: hadoop, group: hadoop }
+    - name: Configure workers file
+      template: { src: templates/workers.j2, dest: "{{ install_dir }}/current/etc/hadoop/workers", owner: hadoop, group: hadoop }
+    - name: Start ResourceManager daemon
+      shell: "sudo -u hadoop {{ install_dir }}/current/bin/yarn --daemon start resourcemanager"
+      args:
+        creates: "/tmp/yarn-hadoop-resourcemanager.pid"
+    - name: Start NodeManager daemon on ResourceManager host
+      shell: "sudo -u hadoop {{ install_dir }}/current/bin/yarn --daemon start nodemanager"
+      args:
+        creates: "/tmp/yarn-hadoop-nodemanager.pid"
+    - name: Start MapReduce JobHistory Server
+      shell: "sudo -u hadoop {{ install_dir }}/current/bin/mapred --daemon start historyserver"
+      args:
+        creates: "/tmp/mapred-hadoop-historyserver.pid"
+
+- name: Configure and Start NodeManagers
+  hosts: nodemanagers:!resourcemanager
+  become: yes
+  vars:
+    install_dir: "/opt/hadoop"
+    java_home: "/usr/lib/jvm/java-11-openjdk-amd64"
+    hdfs_data_dir: "/data/hdfs"
+    yarn_data_dir: "/data/yarn"
+    namenode_host: "nn"
+    resourcemanager_host: "nn"
+    datanode_hosts: ["nn", "dn-00", "dn-01"]
+    nodemanager_hosts: ["nn", "dn-00", "dn-01"]
+    yarn_nodemanager_memory_mb: 2048
+    yarn_nodemanager_cpu_vcores: 2
+    yarn_scheduler_max_allocation_mb: 4096
+    yarn_scheduler_min_allocation_mb: 128
+  tasks:
+    - name: Configure core-site.xml
+      template: { src: templates/core-site.xml.j2, dest: "{{ install_dir }}/current/etc/hadoop/core-site.xml", owner: hadoop, group: hadoop }
+    - name: Configure hdfs-site.xml for NodeManager
+      template: { src: templates/hdfs-site-datanode.xml.j2, dest: "{{ install_dir }}/current/etc/hadoop/hdfs-site.xml", owner: hadoop, group: hadoop }
+    - name: Configure yarn-site.xml
+      template: { src: templates/yarn-site.xml.j2, dest: "{{ install_dir }}/current/etc/hadoop/yarn-site.xml", owner: hadoop, group: hadoop }
+    - name: Configure mapred-site.xml
+      template: { src: templates/mapred-site.xml.j2, dest: "{{ install_dir }}/current/etc/hadoop/mapred-site.xml", owner: hadoop, group: hadoop }
+    - name: Start NodeManager daemon
+      shell: "sudo -u hadoop {{ install_dir }}/current/bin/yarn --daemon start nodemanager"
+      args:
+        creates: "/tmp/yarn-hadoop-nodemanager.pid"
 
