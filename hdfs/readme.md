@@ -34,6 +34,6 @@ Summary
 
 <img src="artefacts/summary.png" height="75%" width="75%"/>
 
-Yarn
+Jobs
 
 <img src="artefacts/yarn.jpg" height="75%" width="75%"/>
