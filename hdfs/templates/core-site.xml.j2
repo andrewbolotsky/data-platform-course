@@ -9,4 +9,23 @@
         <name>hadoop.tmp.dir</name>
         <value>{{ hdfs_data_dir }}</value>
     </property>
+
+    <!-- Разрешаем Hive и Hadoop выступать в роли proxy-пользователей -->
+    <property>
+        <name>hadoop.proxyuser.hive.hosts</name>
+        <value>*</value>
+    </property>
+    <property>
+        <name>hadoop.proxyuser.hive.groups</name>
+        <value>*</value>
+    </property>
+
+    <property>
+        <name>hadoop.proxyuser.hadoop.hosts</name>
+        <value>*</value>
+    </property>
+    <property>
+        <name>hadoop.proxyuser.hadoop.groups</name>
+        <value>*</value>
+    </property>
 </configuration>

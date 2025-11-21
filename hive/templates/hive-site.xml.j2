@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+  
+  <!-- PostgreSQL Metastore Configuration -->
+  <property>
+    <name>javax.jdo.option.ConnectionURL</name>
+    <value>jdbc:postgresql://{{ postgresql_host }}:{{ postgresql_port }}/{{ postgresql_db }}</value>
+    <description>PostgreSQL JDBC connection string</description>
+  </property>
+  
+  <property>
+    <name>javax.jdo.option.ConnectionDriverName</name>
+    <value>org.postgresql.Driver</value>
+    <description>PostgreSQL JDBC driver class</description>
+  </property>
+  
+  <property>
+    <name>javax.jdo.option.ConnectionUserName</name>
+    <value>{{ postgresql_user }}</value>
+    <description>Username to use against metastore database</description>
+  </property>
+  
+  <property>
+    <name>javax.jdo.option.ConnectionPassword</name>
+    <value>{{ postgresql_password }}</value>
+    <description>Password to use against metastore database</description>
+  </property>
+  
+  <!-- Metastore Schema Configuration -->
+  <property>
+    <name>datanucleus.schema.autoCreateAll</name>
+    <value>true</value>
+    <description>Auto-create necessary schema on startup</description>
+  </property>
+  
+  <property>
+    <name>datanucleus.autoCreateSchema</name>
+    <value>true</value>
+    <description>Create schema if doesn't exist</description>
+  </property>
+  
+  <property>
+    <name>datanucleus.fixedDatastore</name>
+    <value>false</value>
+  </property>
+  
+  <!-- Hive Metastore Configuration -->
+  <property>
+    <name>hive.metastore.uris</name>
+    <value>{{ hive_metastore_uri }}</value>
+    <description>Thrift URI for the remote metastore</description>
+  </property>
+  
+  <property>
+    <name>hive.metastore.schema.verification</name>
+    <value>false</value>
+    <description>Disable schema verification for development</description>
+  </property>
+  
+  <property>
+    <name>hive.metastore.warehouse.dir</name>
+    <value>{{ hive_metastore_warehouse_dir }}</value>
+    <description>Default HDFS location for tables</description>
+  </property>
+  
+  <!-- HiveServer2 Configuration -->
+  <property>
+    <name>hive.server2.thrift.port</name>
+    <value>{{ hive_server2_port }}</value>
+    <description>Port number for HiveServer2 Thrift interface</description>
+  </property>
+  
+  <property>
+    <name>hive.server2.thrift.bind.host</name>
+    <value>0.0.0.0</value>
+    <description>Bind address for HiveServer2</description>
+  </property>
+  
+  <property>
+    <name>hive.server2.transport.mode</name>
+    <value>binary</value>
+  </property>
+  
+  <property>
+    <name>hive.server2.authentication</name>
+    <value>NONE</value>
+    <description>Authentication mode (NONE for development)</description>
+  </property>
+  
+  <property>
+    <name>hive.server2.enable.doAs</name>
+    <value>false</value>
+    <description>Disable impersonation for simpler setup</description>
+  </property>
+  
+  <!-- Execution Engine -->
+  <property>
+    <name>hive.execution.engine</name>
+    <value>mr</value>
+    <description>MapReduce as execution engine</description>
+  </property>
+  
+  <!-- Scratch Directory -->
+  <property>
+    <name>hive.exec.scratchdir</name>
+    <value>{{ hive_scratch_dir }}</value>
+  </property>
+  
+  <property>
+    <name>hive.exec.local.scratchdir</name>
+    <value>/tmp/hive/local</value>
+  </property>
+  
+  <!-- Download Directory -->
+  <property>
+    <name>hive.downloaded.resources.dir</name>
+    <value>/tmp/hive/resources</value>
+  </property>
+
+</configuration>
