@@ -1,0 +1,26 @@
+# Общие настройки Hadoop
+hadoop_install_dir: "/opt/hadoop/current"
+hadoop_user: "hadoop"
+java_home: "/usr/lib/jvm/java-11-openjdk-amd64"
+
+# Hive
+hive_version: "4.0.0-alpha-2"
+hive_install_dir: "/opt/hive/apache-hive-4.0.0-alpha-2"
+
+# Hive Server2 Port
+hive_server2_port: 10000
+hive_user: "hive"
+
+# HDFS каталоги для Hive
+hive_metastore_warehouse_dir: "/user/hive/warehouse"
+hive_scratch_dir: "/tmp/hive"
+
+# Метастор на PostgreSQL
+postgresql_host: "nn"          # узел nn (namenode/resourcemanager)
+postgresql_port: "5432"
+postgresql_db: "hive_metastore"
+postgresql_user: "hive"
+postgresql_password: "hive_password_123"
+
+# URI thrift-метастора
+hive_metastore_uri: "thrift://nn:9083"

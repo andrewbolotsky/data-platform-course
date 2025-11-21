@@ -1,6 +1,6 @@
 ## Запуск HDFS-кластера
 
-### Команды для запуска HDFS-кластера и YARN
+### Команды для запуска HDFS-кластера
 Необходимо запустить скрипт
 
 ```bash 
@@ -14,7 +14,7 @@ sudo apt-add-repository --yes --update ppa:ansible/ansible
 sudo apt install ansible
 ```
 
-Запустить HDFS-кластер и YARN
+Запустить HDFS-кластер
 
 ```bash
 ansible-playbook -i inventory.ini deploy-hdfs.yml -vvv
@@ -34,6 +34,8 @@ Summary
 
 <img src="artefacts/summary.png" height="75%" width="75%"/>
 
-Jobs
+Yarn 
 
-<img src="artefacts/yarn.jpg" height="75%" width="75%"/>
+<img src="artefacts/yarn.png" height="75%" width="75%"/>
+
+

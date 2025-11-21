@@ -1,0 +1,379 @@
+---
+- name: Install and Configure PostgreSQL for Hive Metastore
+  hosts: resourcemanager
+  become: yes
+  vars_files:
+    - vars.yml
+  tasks:
+    - name: Install PostgreSQL and Python driver
+      apt:
+        name:
+          - postgresql
+          - python3-psycopg2
+        state: present
+        update_cache: yes
+
+    - name: Ensure PostgreSQL service is running
+      systemd:
+        name: postgresql
+        state: started
+        enabled: yes
+
+    - name: Wait for PostgreSQL to start
+      wait_for:
+        port: 5432
+        delay: 5
+        timeout: 30
+
+    - name: Create metastore database
+      shell: sudo -u postgres createdb "{{ postgresql_db }}"
+      ignore_errors: yes
+
+    - name: Create hive user for metastore
+      shell: sudo -u postgres psql -c "CREATE USER {{ postgresql_user }} WITH PASSWORD '{{ postgresql_password }}';"
+      ignore_errors: yes
+
+    - name: Grant privileges on metastore database
+      shell: sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE {{ postgresql_db }} TO {{ postgresql_user }};"
+      ignore_errors: yes
+
+    - name: Change database owner to hive
+      shell: sudo -u postgres psql -c "ALTER DATABASE {{ postgresql_db }} OWNER TO {{ postgresql_user }};"
+      ignore_errors: yes
+
+    - name: Find PostgreSQL config directory
+      shell: find /etc/postgresql -name "postgresql.conf" | head -1 | xargs dirname
+      register: postgresql_conf_dir
+      changed_when: false
+
+    - name: Configure PostgreSQL to listen on all interfaces
+      lineinfile:
+        path: "{{ postgresql_conf_dir.stdout }}/postgresql.conf"
+        regexp: '^#?listen_addresses\s*='
+        line: "listen_addresses = '*'"
+        backup: yes
+
+    - name: Allow Hive cluster access in pg_hba.conf
+      blockinfile:
+        path: "{{ postgresql_conf_dir.stdout }}/pg_hba.conf"
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - HIVE ACCESS"
+        block: |
+          # Hive Metastore access
+          host    {{ postgresql_db }}   {{ postgresql_user }}   192.168.1.0/24   password
+          host    {{ postgresql_db }}   {{ postgresql_user }}   127.0.0.1/32     password
+
+    - name: Restart PostgreSQL
+      systemd:
+        name: postgresql
+        state: restarted
+
+    - name: Wait for PostgreSQL after restart
+      wait_for:
+        port: 5432
+        delay: 5
+        timeout: 30
+
+- name: Install Hive 4.0.0-alpha-2 on all nodes
+  hosts: all
+  become: yes
+  vars_files:
+    - vars.yml
+  tasks:
+    - name: Install system dependencies for Hive
+      apt:
+        name:
+          - wget
+          - curl
+          - unzip
+          - procps
+        state: present
+        update_cache: yes
+
+    - name: Create hive user
+      user:
+        name: "{{ hive_user }}"
+        home: "/home/{{ hive_user }}"
+        shell: /bin/bash
+        state: present
+        groups: "{{ hadoop_user }}"
+        append: yes
+
+    - name: Check if Hive is already installed
+      stat:
+        path: "{{ hive_install_dir }}/bin/hive"
+      register: hive_exists
+
+    - name: Download Hive archive
+      shell: |
+        wget --progress=bar:force:noscroll --timeout=0 --tries=3 \
+          "https://archive.apache.org/dist/hive/hive-{{ hive_version }}/apache-hive-{{ hive_version }}-bin.tar.gz" \
+          -O /tmp/apache-hive-{{ hive_version }}-bin.tar.gz
+      when: not hive_exists.stat.exists
+      async: 1800
+      poll: 30
+
+    - name: Create Hive installation directory
+      file:
+        path: "{{ hive_install_dir }}"
+        state: directory
+        owner: "{{ hive_user }}"
+        group: "{{ hive_user }}"
+        mode: '0755'
+
+    - name: Extract Hive
+      unarchive:
+        src: "/tmp/apache-hive-{{ hive_version }}-bin.tar.gz"
+        dest: "/opt"
+        remote_src: yes
+        owner: "{{ hive_user }}"
+        group: "{{ hive_user }}"
+      ignore_errors: yes
+
+    - name: Move Hive files into {{ hive_install_dir }}
+      shell: |
+        if [ -d "/opt/apache-hive-{{ hive_version }}-bin" ]; then
+          mv /opt/apache-hive-{{ hive_version }}-bin/* {{ hive_install_dir }}/
+          rm -rf /opt/apache-hive-{{ hive_version }}-bin
+        fi
+
+    - name: Create Hive directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ hive_user }}"
+        group: "{{ hive_user }}"
+        mode: '0755'
+      loop:
+        - "{{ hive_install_dir }}/logs"
+        - "{{ hive_install_dir }}/conf"
+        - "{{ hive_install_dir }}/tmp"
+
+- name: Download PostgreSQL JDBC driver on all nodes
+  hosts: all
+  become: yes
+  vars_files:
+    - vars.yml
+  tasks:
+    - name: Download PostgreSQL JDBC driver
+      get_url:
+        url: "https://jdbc.postgresql.org/download/postgresql-42.5.1.jar"
+        dest: "{{ hive_install_dir }}/lib/postgresql-42.5.1.jar"
+        owner: "{{ hive_user }}"
+        group: "{{ hive_user }}"
+        mode: '0644'
+        timeout: 600
+
+- name: Configure Hive environment on all nodes
+  hosts: all
+  become: yes
+  vars_files:
+    - vars.yml
+  tasks:
+    - name: Create hive-env.sh
+      copy:
+        content: |
+          export JAVA_HOME={{ java_home }}
+          export HADOOP_HOME={{ hadoop_install_dir }}
+          export HIVE_HOME={{ hive_install_dir }}
+          export HIVE_CONF_DIR={{ hive_install_dir }}/conf
+          export HIVE_AUX_JARS_PATH={{ hive_install_dir }}/lib
+        dest: "{{ hive_install_dir }}/conf/hive-env.sh"
+        owner: "{{ hive_user }}"
+        group: "{{ hive_user }}"
+        mode: '0644'
+
+    - name: Configure hive-site.xml
+      template:
+        src: "hive-site.xml.j2"
+        dest: "{{ hive_install_dir }}/conf/hive-site.xml"
+        owner: "{{ hive_user }}"
+        group: "{{ hive_user }}"
+        mode: '0644'
+
+    - name: Copy Hadoop configs to Hive
+      copy:
+        src: "{{ hadoop_install_dir }}/etc/hadoop/{{ item }}"
+        dest: "{{ hive_install_dir }}/conf/"
+        remote_src: yes
+        owner: "{{ hive_user }}"
+        group: "{{ hive_user }}"
+      loop:
+        - core-site.xml
+        - hdfs-site.xml
+        - yarn-site.xml
+        - mapred-site.xml
+
+- name: Prepare HDFS directories for Hive
+  hosts: resourcemanager
+  become: yes
+  vars_files:
+    - vars.yml
+  tasks:
+    - name: Create Hive warehouse directory in HDFS
+      shell: |
+        sudo -u {{ hadoop_user }} {{ hadoop_install_dir }}/bin/hdfs dfs -mkdir -p {{ hive_metastore_warehouse_dir }}
+        sudo -u {{ hadoop_user }} {{ hadoop_install_dir }}/bin/hdfs dfs -chown {{ hive_user }}:{{ hive_user }} {{ hive_metastore_warehouse_dir }}
+        sudo -u {{ hadoop_user }} {{ hadoop_install_dir }}/bin/hdfs dfs -chmod 750 {{ hive_metastore_warehouse_dir }}
+      environment:
+        JAVA_HOME: "{{ java_home }}"
+
+    - name: Create Hive scratch directory in HDFS
+      shell: |
+        sudo -u {{ hadoop_user }} {{ hadoop_install_dir }}/bin/hdfs dfs -mkdir -p {{ hive_scratch_dir }}
+        sudo -u {{ hadoop_user }} {{ hadoop_install_dir }}/bin/hdfs dfs -chown {{ hive_user }}:{{ hive_user }} {{ hive_scratch_dir }}
+        sudo -u {{ hadoop_user }} {{ hadoop_install_dir }}/bin/hdfs dfs -chmod 777 {{ hive_scratch_dir }}
+      environment:
+        JAVA_HOME: "{{ java_home }}"
+
+    - name: Fix Hive scratch subdirectories permissions in HDFS
+      shell: |
+        sudo -u {{ hadoop_user }} {{ hadoop_install_dir }}/bin/hdfs dfs -chown -R {{ hive_user }}:{{ hive_user }} {{ hive_scratch_dir }}
+        sudo -u {{ hadoop_user }} {{ hadoop_install_dir }}/bin/hdfs dfs -chmod -R 777 {{ hive_scratch_dir }}
+      environment:
+        JAVA_HOME: "{{ java_home }}"
+
+    - name: Fix HDFS /tmp permissions
+      shell: |
+        sudo -u {{ hadoop_user }} {{ hadoop_install_dir }}/bin/hdfs dfs -chmod 777 /tmp
+      environment:
+        JAVA_HOME: "{{ java_home }}"
+
+- name: Initialize Hive schema in PostgreSQL
+  hosts: resourcemanager
+  become: yes
+  vars_files:
+    - vars.yml
+  tasks:
+    - name: Stop Hive services before schema init
+      shell: |
+        pkill -f HiveMetaStore || true
+        pkill -f HiveServer2 || true
+      ignore_errors: yes
+
+    - name: Drop and recreate metastore schema
+      shell: |
+        sudo -u postgres psql -c "DROP DATABASE IF EXISTS {{ postgresql_db }};"
+        sudo -u postgres psql -c "CREATE DATABASE {{ postgresql_db }} OWNER {{ postgresql_user }};"
+      ignore_errors: yes
+
+    - name: Initialize Hive schema
+      shell: |
+        sudo -u {{ hive_user }} {{ hive_install_dir }}/bin/schematool \
+          -dbType postgres \
+          -initSchema \
+          -verbose
+      args:
+        chdir: "{{ hive_install_dir }}"
+      environment:
+        HIVE_CONF_DIR: "{{ hive_install_dir }}/conf"
+        JAVA_HOME: "{{ java_home }}"
+      register: schema_init
+      ignore_errors: yes
+
+    - name: Show schema initialization output
+      debug:
+        var: schema_init.stdout
+
+- name: Start Hive services
+  hosts: resourcemanager
+  become: yes
+  vars_files:
+    - vars.yml
+  tasks:
+    - name: Create PID directory for hive user
+      file:
+        path: "/home/{{ hive_user }}/pids"
+        state: directory
+        owner: "{{ hive_user }}"
+        group: "{{ hive_user }}"
+        mode: '0755'
+        recurse: yes
+
+    - name: Fix Hive logs ownership
+      file:
+        path: "{{ hive_install_dir }}/logs"
+        state: directory
+        owner: "{{ hive_user }}"
+        group: "{{ hive_user }}"
+        mode: '0755'
+        recurse: yes
+
+    - name: Stop any running Hive services
+      shell: |
+        pkill -f HiveMetaStore || true
+        pkill -f HiveServer2 || true
+        sleep 5
+      ignore_errors: yes
+
+    - name: Start Hive Metastore
+      become_user: "{{ hive_user }}"
+      shell: |
+        nohup {{ hive_install_dir }}/bin/hive --service metastore \
+          > {{ hive_install_dir }}/logs/metastore.log 2>&1 &
+        echo $! > /home/{{ hive_user }}/pids/hivemetastore.pid
+      args:
+        chdir: "{{ hive_install_dir }}"
+      environment:
+        HIVE_CONF_DIR: "{{ hive_install_dir }}/conf"
+        JAVA_HOME: "{{ java_home }}"
+        HADOOP_HOME: "{{ hadoop_install_dir }}"
+
+    - name: Wait for Metastore to start on port 9083
+      wait_for:
+        host: "{{ ansible_host }}"
+        port: 9083
+        delay: 5
+        timeout: 90
+
+    - name: Start HiveServer2
+      become_user: "{{ hive_user }}"
+      shell: |
+        nohup {{ hive_install_dir }}/bin/hive --service hiveserver2 \
+          > {{ hive_install_dir }}/logs/hiveserver2.log 2>&1 &
+        echo $! > /home/{{ hive_user }}/pids/hiveserver2.pid
+      args:
+        chdir: "{{ hive_install_dir }}"
+      environment:
+        HIVE_CONF_DIR: "{{ hive_install_dir }}/conf"
+        JAVA_HOME: "{{ java_home }}"
+        HADOOP_HOME: "{{ hadoop_install_dir }}"
+
+    - name: Wait for HiveServer2 to start on port {{ hive_server2_port }}
+      wait_for:
+        host: "{{ ansible_host }}"
+        port: "{{ hive_server2_port }}"
+        delay: 10
+        timeout: 120
+
+- name: Verify Hive installation
+  hosts: resourcemanager
+  become: yes
+  vars_files:
+    - vars.yml
+  tasks:
+    - name: Check Hive processes
+      shell: ps aux | grep -E 'HiveMetaStore|HiveServer2' | grep -v grep
+      register: hive_processes
+
+    - name: Show Hive processes
+      debug:
+        var: hive_processes.stdout_lines
+
+    - name: Test Hive with beeline
+      shell: |
+        {{ hive_install_dir }}/bin/beeline \
+          -u "jdbc:hive2://localhost:{{ hive_server2_port }}" \
+          -n {{ hive_user }} \
+          -e "SHOW DATABASES;" \
+          --silent=true
+      args:
+        chdir: "{{ hive_install_dir }}"
+      environment:
+        HIVE_CONF_DIR: "{{ hive_install_dir }}/conf"
+        JAVA_HOME: "{{ java_home }}"
+      register: beeline_test
+      ignore_errors: yes
+
+    - name: Show beeline test result
+      debug:
+        var: beeline_test.stdout_lines
