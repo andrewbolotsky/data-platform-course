@@ -1,0 +1,188 @@
+---
+- name: Install Apache Spark on all nodes
+  hosts: all
+  become: yes
+  vars_files:
+    - vars.yml
+  tasks:
+    - name: Update package cache
+      apt:
+        update_cache: yes
+
+    - name: Install required packages
+      apt:
+        name:
+          - wget
+          - curl
+          - unzip
+          - python3
+          - python3-pip
+        state: present
+
+    - name: Create spark user
+      user:
+        name: "{{ spark_user }}"
+        home: "/home/{{ spark_user }}"
+        shell: /bin/bash
+        state: present
+        groups: "{{ hadoop_user }}"
+        append: yes
+
+    - name: Check if Spark is already installed
+      stat:
+        path: "{{ spark_install_dir }}/bin/spark-submit"
+      register: spark_exists
+
+    - name: Download Spark archive
+      shell: |
+        wget --progress=bar:force:noscroll --timeout=0 --tries=3 \
+          "https://archive.apache.org/dist/spark/spark-{{ spark_version }}/spark-{{ spark_version }}-bin-hadoop3.tgz" \
+          -O /tmp/spark-{{ spark_version }}-bin-hadoop3.tgz
+      when: not spark_exists.stat.exists
+      async: 1800
+      poll: 30
+
+    - name: Create Spark installation directory
+      file:
+        path: "/opt/spark"
+        state: directory
+        owner: "{{ spark_user }}"
+        group: "{{ spark_user }}"
+        mode: '0755'
+
+    - name: Extract Spark
+      unarchive:
+        src: "/tmp/spark-{{ spark_version }}-bin-hadoop3.tgz"
+        dest: "/opt/spark"
+        remote_src: yes
+        owner: "{{ spark_user }}"
+        group: "{{ spark_user }}"
+
+    - name: Create symlink for Spark
+      file:
+        src: "/opt/spark/spark-{{ spark_version }}-bin-hadoop3"
+        dest: "{{ spark_install_dir }}"
+        state: link
+        owner: "{{ spark_user }}"
+        group: "{{ spark_user }}"
+
+    - name: Create Spark directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ spark_user }}"
+        group: "{{ spark_user }}"
+        mode: '0755'
+      loop:
+        - "{{ spark_install_dir }}/logs"
+        - "{{ spark_install_dir }}/work"
+        - "{{ spark_install_dir }}/conf"
+
+- name: Configure Spark on all nodes
+  hosts: all
+  become: yes
+  vars_files:
+    - vars.yml
+  tasks:
+    - name: Copy Hadoop configs to Spark
+      copy:
+        src: "{{ hadoop_install_dir }}/etc/hadoop/{{ item }}"
+        dest: "{{ spark_install_dir }}/conf/"
+        remote_src: yes
+        owner: "{{ spark_user }}"
+        group: "{{ spark_user }}"
+      loop:
+        - core-site.xml
+        - hdfs-site.xml
+        - yarn-site.xml
+        - mapred-site.xml
+
+    - name: Configure spark-env.sh
+      template:
+        src: templates/spark-env.sh.j2
+        dest: "{{ spark_install_dir }}/conf/spark-env.sh"
+        owner: "{{ spark_user }}"
+        group: "{{ spark_user }}"
+        mode: '0644'
+
+    - name: Configure spark-defaults.conf
+      template:
+        src: templates/spark-defaults.conf.j2
+        dest: "{{ spark_install_dir }}/conf/spark-defaults.conf"
+        owner: "{{ spark_user }}"
+        group: "{{ spark_user }}"
+        mode: '0644'
+
+    - name: Configure log4j2.properties
+      copy:
+        content: |
+          rootLogger.level = WARN
+          rootLogger.appenderRef.stdout.ref = console
+          appender.console.type = Console
+          appender.console.name = console
+          appender.console.target = SYSTEM_ERR
+          appender.console.layout.type = PatternLayout
+          appender.console.layout.pattern = %d{yyyy-MM-dd HH:mm:ss} %-5p %c{1}:%L - %m%n
+        dest: "{{ spark_install_dir }}/conf/log4j2.properties"
+        owner: "{{ spark_user }}"
+        group: "{{ spark_user }}"
+        mode: '0644'
+
+    - name: Add Spark to PATH for spark user
+      lineinfile:
+        path: "/home/{{ spark_user }}/.bashrc"
+        line: "export PATH={{ spark_install_dir }}/bin:{{ spark_install_dir }}/sbin:$PATH"
+        create: yes
+        owner: "{{ spark_user }}"
+        group: "{{ spark_user }}"
+
+    - name: Set SPARK_HOME for spark user
+      lineinfile:
+        path: "/home/{{ spark_user }}/.bashrc"
+        line: "export SPARK_HOME={{ spark_install_dir }}"
+        create: yes
+        owner: "{{ spark_user }}"
+        group: "{{ spark_user }}"
+
+- name: Download Hive JDBC driver for Spark
+  hosts: all
+  become: yes
+  vars_files:
+    - vars.yml
+  tasks:
+    - name: Download Hive JDBC driver
+      get_url:
+        url: "https://repo1.maven.org/maven2/org/apache/hive/hive-jdbc/3.1.3/hive-jdbc-3.1.3-standalone.jar"
+        dest: "{{ spark_install_dir }}/jars/hive-jdbc-3.1.3-standalone.jar"
+        owner: "{{ spark_user }}"
+        group: "{{ spark_user }}"
+        mode: '0644'
+        timeout: 600
+
+    - name: Download Hive Metastore client
+      get_url:
+        url: "https://repo1.maven.org/maven2/org/apache/hive/hive-metastore/3.1.3/hive-metastore-3.1.3.jar"
+        dest: "{{ spark_install_dir }}/jars/hive-metastore-3.1.3.jar"
+        owner: "{{ spark_user }}"
+        group: "{{ spark_user }}"
+        mode: '0644'
+        timeout: 600
+
+    - name: Download Hive Exec
+      get_url:
+        url: "https://repo1.maven.org/maven2/org/apache/hive/hive-exec/3.1.3/hive-exec-3.1.3.jar"
+        dest: "{{ spark_install_dir }}/jars/hive-exec-3.1.3.jar"
+        owner: "{{ spark_user }}"
+        group: "{{ spark_user }}"
+        mode: '0644'
+        timeout: 600
+
+    - name: Download PostgreSQL JDBC driver for Spark
+      get_url:
+        url: "https://jdbc.postgresql.org/download/postgresql-42.5.1.jar"
+        dest: "{{ spark_install_dir }}/jars/postgresql-42.5.1.jar"
+        owner: "{{ spark_user }}"
+        group: "{{ spark_user }}"
+        mode: '0644'
+        timeout: 600
+

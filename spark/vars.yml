@@ -1,0 +1,28 @@
+# Общие настройки Hadoop
+hadoop_install_dir: "/opt/hadoop/current"
+hadoop_user: "hadoop"
+java_home: "/usr/lib/jvm/java-11-openjdk-amd64"
+
+# Spark
+spark_version: "3.3.4"
+spark_install_dir: "/opt/spark/spark-{{ spark_version }}"
+spark_user: "spark"
+
+# HDFS настройки
+namenode_host: "nn"
+hdfs_uri: "hdfs://{{ namenode_host }}:9000"
+
+# YARN настройки
+resourcemanager_host: "nn"
+yarn_resourcemanager_address: "{{ resourcemanager_host }}:8032"
+
+# Hive настройки
+hive_metastore_uri: "thrift://{{ namenode_host }}:9083"
+hive_install_dir: "/opt/hive/apache-hive-4.0.0-alpha-2"
+
+# Spark настройки
+spark_executor_memory: "1g"
+spark_executor_cores: "1"
+spark_driver_memory: "512m"
+spark_driver_cores: "1"
+
