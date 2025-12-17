@@ -1,0 +1,33 @@
+# Spark Master
+spark.master                     yarn
+
+# YARN Configuration
+spark.submit.deployMode          client
+spark.yarn.am.memory             512m
+spark.executor.memory            {{ spark_executor_memory }}
+spark.executor.cores             {{ spark_executor_cores }}
+spark.driver.memory              {{ spark_driver_memory }}
+spark.driver.cores               {{ spark_driver_cores }}
+
+# HDFS Configuration
+spark.hadoop.fs.defaultFS        {{ hdfs_uri }}
+
+# Hive Configuration
+spark.sql.catalogImplementation  hive
+spark.sql.warehouse.dir          /user/hive/warehouse
+spark.hadoop.hive.metastore.uris {{ hive_metastore_uri }}
+
+# Serialization
+spark.serializer                 org.apache.spark.serializer.KryoSerializer
+
+# Dynamic allocation
+spark.dynamicAllocation.enabled  false
+
+# Shuffle
+spark.shuffle.service.enabled    false
+
+# Logging
+spark.eventLog.enabled           true
+spark.eventLog.dir               hdfs://{{ namenode_host }}:9000/spark-logs
+spark.history.fs.logDirectory    hdfs://{{ namenode_host }}:9000/spark-logs
+
