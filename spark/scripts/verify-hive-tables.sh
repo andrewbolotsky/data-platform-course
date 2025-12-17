@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# Скрипт для проверки данных через Hive клиент
-# Использование: ./verify-hive-tables.sh
-
 set -e
 
 HIVE_HOME="/opt/hive/apache-hive-4.0.0-alpha-2"
@@ -12,7 +9,6 @@ HIVE_PORT="10000"
 
 echo "=== Проверка данных через Hive клиент ==="
 
-# Проверяем доступность HiveServer2
 echo "Проверка доступности HiveServer2..."
 if ! nc -z ${HIVE_SERVER} ${HIVE_PORT} 2>/dev/null; then
     echo "ОШИБКА: HiveServer2 недоступен на ${HIVE_SERVER}:${HIVE_PORT}"
@@ -20,7 +16,6 @@ if ! nc -z ${HIVE_SERVER} ${HIVE_PORT} 2>/dev/null; then
 fi
 echo "HiveServer2 доступен"
 
-# Используем beeline для подключения к Hive
 echo ""
 echo "=== Подключение к Hive через beeline ==="
 

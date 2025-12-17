@@ -1,62 +1,79 @@
-# Практическое задание №4: Apache Spark на YARN
+## Практическое задание №4: Apache Spark под управлением YARN
 
-## Описание решения
-Реализована автоматизированная обработка данных с использованием Apache Spark под управлением YARN. Решение включает чтение данных из HDFS, трансформацию (агрегацию), партиционированное сохранение и регистрацию таблиц в Hive.
+### Используемые компоненты
+- **YARN / HDFS / Hive** — кластер из предыдущих заданий;
+- **Spark 3.3.4** — установлен на все узлы кластера и настроен на работу с YARN и Hive;
+- **PySpark** — логика обработки данных.
 
-### Архитектура решения
-Из-за несовместимости библиотек Hive (версии 2.3/3.1) с Java 11 (ClassCastException) и конфликтов версий Parquet между Spark 3.x и Hadoop 3.3.6, применена гибридная архитектура:
+## Как именно выполняются пункты задания
 
-1.  **Processing (Spark 3.3.4):**
-    *   Запускается на YARN в режиме `client`.
-    *   Выполняет чтение CSV, очистку и агрегацию данных.
-    *   Сохраняет результаты в формате **JSON** (для обхода конфликтов `commons-compress`/`parquet-hadoop`).
-    *   Использует партиционирование по колонкам `category` и `region`.
-2.  **Metastore Registration (Beeline):**
-    *   После успешного завершения Spark, Bash-скрипт запускает CLI утилиту `beeline`.
-    *   Выполняет DDL команды (`CREATE EXTERNAL TABLE`) для регистрации созданных файлов как таблиц Hive.
-    *   Этот подход обеспечивает надежную изоляцию процессов и гарантирует совместимость.
+### 1. Запуск сессии Spark под управлением YARN
+- Сессия создается в скрипте `scripts/spark-data-processing.py` через `SparkSession.builder.enableHiveSupport()`.
+- Запуск выполняется командой:
 
-## Структура проекта
-*   `deploy-spark.yml` — Ansible playbook для установки Spark 3.3.4.
-*   `vars.yml` — Конфигурационные переменные.
-*   `scripts/run-spark-job.sh` — Основной скрипт запуска (оркестратор).
-*   `scripts/spark-data-processing.py` — Код приложения Spark (PySpark).
-*   `templates/` — Шаблоны конфигураций (`spark-defaults.conf`, `spark-env.sh`).
-
-## Инструкция по запуску
-
-### 1. Развертывание Spark
-Если Spark еще не установлен на кластере:
-```bash
-cd spark
-ansible-playbook -i ../hdfs/inventory.ini deploy-spark.yml
-```
-
-### 2. Запуск обработки данных
-Скрипт выполняет расчеты и автоматически создает таблицы в Hive:
 ```bash
 ./scripts/run-spark-job.sh
 ```
 
-### 3. Проверка результатов
-Для проверки наличия данных в таблицах Hive можно использовать скрипт из предыдущего задания или зайти в Beeline вручную:
-```bash
-/opt/hive/apache-hive-4.0.0-alpha-2/bin/beeline -u "jdbc:hive2://nn:10000/default" -n spark -p spark -e "SELECT * FROM sales_category_stats LIMIT 5;"
+- Скрипт внутри вызывает `spark-submit --master yarn --deploy-mode client`, что явно запускает приложение Spark под управлением YARN.
+
+### 2. Подключение к HDFS и чтение данных
+- В `spark-data-processing.py` данные читаются из HDFS по пути:
+  - `hdfs://nn:9000/user/spark/input/sales_data.csv`
+- Используется явная схема и опции `header = true`, `inferSchema = false`.
+
+### 3. Трансформации данных
+В скрипте выполняются:
+- приведение поля `sale_date` к дате;
+- добавление вычисляемого поля `total_sale_amount = price * quantity`;
+- добавление категориального признака `price_category` (Cheap/Medium/Expensive);
+- три вида агрегаций:
+  - по категории (`sales_category_stats`);
+  - по региону (`sales_region_stats`);
+  - по паре (категория, регион) (`sales_category_region_stats`).
+
+Результаты промежуточных агрегаций выводятся в консоль (и в лог `/tmp/spark-job-output.log`).
+
+### 4. Применение партиционирования при сохранении данных
+- Основной набор данных (`df_transformed`) сохраняется в HDFS по пути:
+  - `hdfs://nn:9000/user/spark/output/sales_transformed`
+- Перед сохранением данные репартиционируются по колонкам `category`, `region`, затем записываются в формате JSON с использованием `partitionBy("category", "region")`.
+- В результате в HDFS создаются подкаталоги вида:
+  - `.../sales_transformed/category=Electronics/region=North/` и т.п.
+
+### 5. Сохранение преобразованных данных как таблиц Hive
+- Преобразованные данные сохраняются в HDFS и регистрируются в Hive как внешние таблицы (EXTERNAL), напрямую ссылающиеся на созданные каталоги:
+  - `sales_transformed` (партиционированная по `category`, `region`, указывает на `.../output/sales_transformed`);
+  - `sales_category_stats` (указывает на `.../output/sales_transformed_category_stats`);
+  - `sales_region_stats` (указывает на `.../output/sales_transformed_region_stats`).
+
+### 6. Проверка чтения данных стандартным клиентом Hive
+После регистрации таблиц в Hive их можно прочитать любым стандартным клиентом Hive (HiveServer2/JDBC), например:
+
+```sql
+SELECT * FROM sales_transformed LIMIT 10;
 ```
 
-## Доступ к веб-интерфейсам (UI)
+## Структура проекта
+- `deploy-spark.yml` — Ansible playbook для установки и настройки Spark на всех узлах.
+- `vars.yml` — общие переменные (пути, имена хостов, ресурсы Spark).
+- `scripts/run-spark-job.sh` — сценарий запуска:
+  - проверяет наличие Spark и приложения;
+  - исполняет `spark-submit` на YARN;
+  - выводит ключевые шаги работы приложения и путь к логам.
+- `scripts/spark-data-processing.py` — код PySpark-приложения:
+  - создает SparkSession с поддержкой Hive;
+  - читает CSV из HDFS;
+  - выполняет трансформации и агрегации;
+  - сохраняет результаты с партиционированием в HDFS.
+- `templates/` — шаблоны конфигураций Spark (`spark-defaults.conf.j2`, `spark-env.sh.j2`).
 
-Для просмотра статуса задач и логов используйте SSH-туннелирование к узлу `nn` (192.168.1.47).
+## Веб-интерфейсы
 
-*   **YARN Resource Manager:** http://192.168.1.47:8088
-    *   Показывает список запущенных и завершенных приложений.
-*   **Spark History Server:** http://192.168.1.47:18080
-    *   Детальная статистика по этапам (Stages) и задачам (Tasks).
-    *   *Примечание:* Требует запуска `/opt/spark/spark-3.3.4/sbin/start-history-server.sh`.
+- **YARN Resource Manager UI**  
+  - URL: `http://nn:8088`  
+  - Позволяет увидеть приложение `SparkDataProcessing`, его статус и использование ресурсов.
 
-## Созданные таблицы
-В ходе выполнения создаются следующие внешние таблицы (External Tables):
-1.  `sales_transformed` — Основные данные (партиционированы по `category`, `region`).
-2.  `sales_category_stats` — Агрегация по категориям.
-3.  `sales_region_stats` — Агрегация по регионам.
-4.  `sales_category_region_stats` — Сводная статистика.
+- **Spark History Server** (если развернут в среде)  
+  - URL по умолчанию: `http://team-11-jn:18080`  
+  - Показывает детали выполнения задачи (DAG, стадии, задачи).

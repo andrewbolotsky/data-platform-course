@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# Скрипт для загрузки тестовых данных на HDFS
-# Использование: ./load-sample-data.sh
-
 set -e
 
 HADOOP_HOME="/opt/hadoop/current"
@@ -13,10 +10,8 @@ HDFS_USER="hadoop"
 
 echo "=== Загрузка тестовых данных на HDFS ==="
 
-# Создаем локальную директорию с тестовыми данными
 mkdir -p ${INPUT_DIR}
 
-# Генерируем тестовые данные (CSV формат)
 cat > ${INPUT_DIR}/sales_data.csv << 'EOF'
 id,product_name,category,price,quantity,sale_date,region
 1,Laptop,Electronics,999.99,5,2024-01-15,North
@@ -43,14 +38,11 @@ EOF
 
 echo "Тестовые данные созданы в ${INPUT_DIR}"
 
-# Создаем директорию на HDFS
 sudo -u ${HDFS_USER} ${HADOOP_HOME}/bin/hdfs dfs -mkdir -p ${HDFS_INPUT_DIR}
 
-# Загружаем данные на HDFS
 echo "Загрузка данных на HDFS..."
 sudo -u ${HDFS_USER} ${HADOOP_HOME}/bin/hdfs dfs -put ${INPUT_DIR}/sales_data.csv ${HDFS_INPUT_DIR}/
 
-# Проверяем загрузку
 echo "Проверка загруженных данных:"
 sudo -u ${HDFS_USER} ${HADOOP_HOME}/bin/hdfs dfs -ls ${HDFS_INPUT_DIR}
 sudo -u ${HDFS_USER} ${HADOOP_HOME}/bin/hdfs dfs -cat ${HDFS_INPUT_DIR}/sales_data.csv | head -5

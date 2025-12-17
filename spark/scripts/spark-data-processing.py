@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""
-Spark приложение для чтения, трансформации и записи данных
-Запуск: spark-submit --master yarn spark-data-processing.py
-"""
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, sum as spark_sum, avg, count, when, round as spark_round, to_date
@@ -10,11 +6,9 @@ from pyspark.sql.types import StructType, StructField, StringType, DoubleType, I
 import sys
 
 def create_spark_session():
-    """Создает Spark Session с настройками для YARN и Hive"""
     print("=== Создание Spark Session ===", flush=True)
     print("Настройка Spark Session...", flush=True)
-    
-    # Не указываем master() явно, чтобы можно было передавать через spark-submit
+
     spark = SparkSession.builder \
         .appName("SparkDataProcessing") \
         .config("spark.submit.deployMode", "client") \
@@ -30,10 +24,8 @@ def create_spark_session():
     return spark
 
 def read_data_from_hdfs(spark, input_path):
-    """Читает данные из HDFS"""
     print(f"=== Чтение данных из HDFS: {input_path} ===")
-    
-    # Определяем схему данных
+
     schema = StructType([
         StructField("id", IntegerType(), True),
         StructField("product_name", StringType(), True),
@@ -43,42 +35,36 @@ def read_data_from_hdfs(spark, input_path):
         StructField("sale_date", StringType(), True),
         StructField("region", StringType(), True)
     ])
-    
-    # Читаем CSV файл
+
     df = spark.read \
         .option("header", "true") \
         .option("inferSchema", "false") \
         .schema(schema) \
         .csv(input_path)
-    
+
     print(f"Загружено строк: {df.count()}")
     print("Первые 5 строк:")
     df.show(5, truncate=False)
-    
+
     return df
 
 def transform_data(df):
-    """Применяет трансформации к данным"""
     print("\n=== Применение трансформаций данных ===")
-    
-    # 1. Преобразование типов: преобразуем sale_date из строки в дату
+
     df_transformed = df.withColumn("sale_date", to_date(col("sale_date"), "yyyy-MM-dd"))
-    
-    # 2. Добавляем вычисляемое поле: общая стоимость продажи
+
     df_transformed = df_transformed.withColumn(
         "total_sale_amount", 
         col("price") * col("quantity")
     )
-    
-    # 3. Добавляем категорию цены (дорогой/средний/дешевый)
+
     df_transformed = df_transformed.withColumn(
         "price_category",
         when(col("price") >= 500, "Expensive")
         .when(col("price") >= 100, "Medium")
         .otherwise("Cheap")
     )
-    
-    # 4. Агрегация: статистика по категориям
+
     print("\n--- Агрегация по категориям ---")
     category_stats = df_transformed.groupBy("category") \
         .agg(
@@ -88,10 +74,9 @@ def transform_data(df):
             spark_round(spark_sum("total_sale_amount"), 2).alias("total_revenue")
         ) \
         .orderBy("category")
-    
+
     category_stats.show(truncate=False)
-    
-    # 5. Агрегация: статистика по регионам
+
     print("\n--- Агрегация по регионам ---")
     region_stats = df_transformed.groupBy("region") \
         .agg(
@@ -100,10 +85,9 @@ def transform_data(df):
             spark_round(avg("total_sale_amount"), 2).alias("avg_sale_amount")
         ) \
         .orderBy("region")
-    
+
     region_stats.show(truncate=False)
-    
-    # 6. Агрегация: статистика по категориям и регионам
+
     print("\n--- Агрегация по категориям и регионам ---")
     category_region_stats = df_transformed.groupBy("category", "region") \
         .agg(
@@ -111,22 +95,18 @@ def transform_data(df):
             spark_round(spark_sum("total_sale_amount"), 2).alias("total_revenue")
         ) \
         .orderBy("category", "region")
-    
+
     category_region_stats.show(truncate=False)
-    
+
     return df_transformed, category_stats, region_stats, category_region_stats
 
 def save_with_partitioning(df, output_path, partition_cols):
-    """Сохраняет данные с партиционированием"""
     print(f"\n=== Сохранение данных с партиционированием по {partition_cols} ===")
-    
-    # Репартиционируем данные перед сохранением
-    # Используем coalesce для уменьшения количества партиций или repartition для увеличения
+
     df_partitioned = df.repartition(*partition_cols)
-    
+
     print(f"Количество партиций перед сохранением: {df_partitioned.rdd.getNumPartitions()}")
-    
-    # Сохраняем в JSON формате с партиционированием
+
     df_partitioned.write \
         .mode("overwrite") \
         .partitionBy(*partition_cols) \
@@ -135,31 +115,25 @@ def save_with_partitioning(df, output_path, partition_cols):
     print(f"Данные сохранены в: {output_path}")
 
 def save_as_hive_table(spark, df, table_name, partition_cols=None):
-    """Сохраняет данные как таблицу Hive"""
     print(f"\n=== Сохранение данных как таблицы Hive: {table_name} ===")
-    
-    # Создаем временное представление
+
     temp_view = f"{table_name}_temp_view"
     df.createOrReplaceTempView(temp_view)
-    
-    # Сохраняем как таблицу Hive
+
     if partition_cols:
-        # Сохраняем с партиционированием
         df.write \
             .mode("overwrite") \
             .format("json") \
             .partitionBy(*partition_cols) \
             .saveAsTable(table_name)
     else:
-        # Сохраняем без партиционирования
         df.write \
             .mode("overwrite") \
             .format("json") \
             .saveAsTable(table_name)
-    
+
     print(f"Таблица {table_name} создана в Hive")
-    
-    # Проверяем таблицу
+
     print(f"\nПроверка таблицы {table_name}:")
     spark.sql(f"SELECT COUNT(*) as total_rows FROM {table_name}").show()
     spark.sql(f"DESCRIBE {table_name}").show(truncate=False)

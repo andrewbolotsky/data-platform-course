@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# Скрипт для запуска Spark приложения
-# Использование: ./run-spark-job.sh
-
 set -e
 
 SPARK_HOME="/opt/spark/spark-3.3.4"
@@ -12,52 +9,41 @@ SPARK_APP="${SCRIPT_DIR}/spark-data-processing.py"
 LOG_FILE="/tmp/spark-job-output.log"
 NN_HOST="nn"
 
-# Функция очистки временных файлов
 cleanup() {
     if [ -n "${TEMP_APP}" ] && [ -f "${TEMP_APP}" ]; then
         rm -f "${TEMP_APP}"
     fi
 }
 
-# Устанавливаем trap для очистки при выходе
 trap cleanup EXIT
 
 echo "=== Запуск Spark приложения ==="
 
-# Проверяем наличие Spark
 if [ ! -f "${SPARK_HOME}/bin/spark-submit" ]; then
     echo "ОШИБКА: Spark не установлен в ${SPARK_HOME}"
     exit 1
 fi
 
-# Проверяем наличие скрипта
 if [ ! -f "${SPARK_APP}" ]; then
     echo "ОШИБКА: Spark приложение не найдено: ${SPARK_APP}"
     exit 1
 fi
 
-# Копируем файл в доступное место для пользователя spark
 TEMP_APP="/tmp/spark-data-processing-$$.py"
 echo "Копирование приложения во временную директорию..."
 cp "${SPARK_APP}" "${TEMP_APP}"
 chmod 644 "${TEMP_APP}"
 
-# Запускаем Spark приложение
 echo "Запуск Spark приложения на YARN..."
 echo "Вывод будет сохранен в ${LOG_FILE}"
 
-# Пытаемся использовать sudo с паролем из переменной окружения или инвентаря
 SUDO_PASSWORD="${SUDO_PASSWORD:-ORl8L_hG1f}"
 
-# Подготовка лог-файла
 rm -f ${LOG_FILE}
 touch ${LOG_FILE}
 chmod 666 ${LOG_FILE}
 echo "Запуск: $(date)" > ${LOG_FILE}
 
-# Запускаем в YARN Client Mode
-# Используем hostname для HDFS и Hive Metastore
-# Явно указываем IP текущего хоста для Driver, чтобы избежать проблем с DNS/сетью
 DRIVER_IP=$(hostname -i)
 
 echo "${SUDO_PASSWORD}" | sudo -S -u ${SPARK_USER} bash -c "export HADOOP_CONF_DIR=/opt/hadoop/current/etc/hadoop && ${SPARK_HOME}/bin/spark-submit \
@@ -87,19 +73,12 @@ if [ ${EXIT_CODE} -eq 0 ]; then
     
     echo ""
     echo "=== Создание таблиц в Hive (через Beeline) ==="
-    # Используем Beeline для регистрации таблиц, так как Spark не может сделать это сам из-за конфликта Java 11
-    
     HIVE_HOME="/opt/hive/apache-hive-4.0.0-alpha-2"
     BEELINE="${HIVE_HOME}/bin/beeline"
     JDBC_URL="jdbc:hive2://${NN_HOST}:10000/default"
     
     if [ -f "${BEELINE}" ]; then
         echo "Создание таблиц..."
-        
-        # SQL скрипт для создания таблиц
-        # Используем JsonSerDe для чтения JSON файлов, созданных Spark'ом
-        # Обрати внимание: пути к данным должны совпадать с теми, куда писал Spark
-        
         ${BEELINE} -u "${JDBC_URL}" -n spark -p spark -e "
         -- Таблица с основными данными (партиционированная)
         DROP TABLE IF EXISTS sales_transformed;
