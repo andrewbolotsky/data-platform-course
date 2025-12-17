@@ -77,3 +77,11 @@ SELECT * FROM sales_transformed LIMIT 10;
 - **Spark History Server** (если развернут в среде)  
   - URL по умолчанию: `http://team-11-jn:18080`  
   - Показывает детали выполнения задачи (DAG, стадии, задачи).
+
+## Артефакты
+
+- **YARN Resource Manager — список приложений Spark**  
+  ![YARN Resource Manager — All Applications](artefacts/Screenshot%202025-12-17%20at%2021.35.20.png)
+
+- **Spark History Server — выполненные приложения `SparkDataProcessing`**  
+  ![Spark History Server — SparkDataProcessing runs](artefacts/Screenshot%202025-12-17%20at%2021.34.49.png)
